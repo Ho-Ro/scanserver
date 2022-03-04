@@ -1,0 +1,62 @@
+#!/bin/sh
+
+DEST=/media/sda/scanner
+[ -d $DEST ] || DEST=.
+
+MODE="--mode=Gray"
+RESOLUTION="--resolution=300"
+
+LOCK=/tmp/.scanner.lock
+
+while true; do
+    # prepare the next scan
+    TMP=$(mktemp -d /tmp/scan.XXXXXX)
+    CONDITION=99
+    LPR_SIDES="one-sided"
+    while true; do # scan pages
+        BUTTON=0
+        # wait for button press
+        while [ $BUTTON -eq 0 ]; do
+            sleep 1
+            # check the scanner buttons unless another process uses the scanner
+            flock $LOCK scannerbutton > /dev/null
+            BUTTON=$? # 1:scan, 2:print, 4:send
+            if [ $BUTTON -eq 255 ]; then # not initalized (or unplugged and replugged?)
+                flock $LOCK sane-find-scanner -q > /dev/null # init the scanner HW
+                BUTTON=0
+            fi
+        done
+        # echo BUTTON: $BUTTON
+        # if button 1 -> scan always, if 2 or 3 -> process if scan available
+        [ $BUTTON -gt $CONDITION ] && break
+        # echo SCAN
+        NOW=$(date +%Y%m%d_%H%M%S)
+        TIFF=${TMP}/scan_${NOW}.tiff
+        # cp /home/horo/projects/scannerbutton/scan_1.tiff $TIFF
+        # now get an image unless another process uses the scanner
+        flock $LOCK scanimage -x 205 -y 297 --format=tiff $MODE $RESOLUTION --calibration-cache=yes > $TIFF
+        PDF=$TMP/scan_${NOW}.pdf
+        tiff2pdf -j -pA4 -o $PDF $TIFF
+        rm $TIFF
+        if [ $CONDITION -eq 1 ]; then # more than 1 page -> use duplex print
+            LPR_SIDES="two-sided-long-edge"
+        fi
+        CONDITION=1
+        [ $BUTTON -gt $CONDITION ] && break # leave always for print/send
+    done
+
+    # button 2 or 3 pressed, process the page(s)
+    SCAN=Scan_$(date +%Y%m%d_%H%M%S).pdf
+    # echo SAVE $SCAN
+    # combine all single pages into one document
+    pdfcat $TMP/scan_*_*.pdf > "$DEST/$SCAN"
+    # access for all user
+    chmod 666 "$DEST/$SCAN"
+    # clean up
+    rm -f $TMP/*.pdf
+    if [ $BUTTON -lt 4 ]; then # it was the PRINT button
+        # echo PRINT $SCAN
+        lpr -P laser -o sides=$LPR_SIDES "$DEST/$SCAN"
+    fi
+    rmdir $TMP
+done

@@ -1,0 +1,14 @@
+.*~
+*~
+
+*.kate-swp
+
+*.new
+*.old
+*.orig
+
+*.o
+
+*.tiff
+*.pdf
+
